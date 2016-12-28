@@ -164,7 +164,7 @@ describe('document modified', function() {
       assert.equal(post.isModified('title'), true);
 
       assert.equal(post.isModified('date'), false);
-      post.set('date', new Date(post.date + 10));
+      post.set('date', new Date(post.date.getTime() + 10));
       assert.equal(post.isModified('date'), true);
 
       assert.equal(post.isModified('meta.date'), false);
@@ -435,6 +435,34 @@ describe('document modified', function() {
         });
 
         assert.ok(account.roles[0].users[0].isModified);
+        done();
+      });
+
+      it('with discriminators (gh-3575)', function(done) {
+        var shapeSchema = new mongoose.Schema({}, {discriminatorKey: 'kind'});
+
+        var Shape = mongoose.model('gh3575', shapeSchema);
+
+        var Circle = Shape.discriminator('gh3575_0', new mongoose.Schema({
+          radius: { type: Number }
+        }, {discriminatorKey: 'kind'}));
+
+        var fooSchema = new mongoose.Schema({
+          bars: [{
+            type: mongoose.Schema.Types.ObjectId,
+            ref: 'gh3575'
+          }]
+        });
+
+        var Foo = mongoose.model('Foo', fooSchema);
+
+        var test = new Foo({});
+        test.bars = [new Circle({}), new Circle({})];
+
+        assert.ok(test.populated('bars'));
+        assert.ok(test.bars[0]._id);
+        assert.ok(test.bars[1]._id);
+
         done();
       });
     });

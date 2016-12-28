@@ -1465,8 +1465,10 @@ describe('model: findByIdAndUpdate:', function() {
       });
 
       var TestModel = db.model('gh3107', testSchema);
+      var update = { $setOnInsert: { a: [{foo: 'bar'}], b: [2] } };
+      var opts = {upsert: true, new: true, setDefaultsOnInsert: true};
       TestModel
-      .findOneAndUpdate({id: '1'}, {$setOnInsert: {a: [{foo: 'bar'}], b: [2]}}, {upsert: true, new: true, setDefaultsOnInsert: true},
+      .findOneAndUpdate({name: 'abc'}, update, opts,
           function(error, doc) {
             assert.ifError(error);
             assert.equal(doc.a.length, 1);
@@ -1609,6 +1611,25 @@ describe('model: findByIdAndUpdate:', function() {
         });
     });
 
+    it('raw result as 3rd param w/ lean (gh-4761)', function(done) {
+      var testSchema = new mongoose.Schema({
+        test: String
+      });
+
+      var TestModel = db.model('gh4761', testSchema);
+      var options = { upsert: true, new: true, passRawResult: true };
+      var update = { $set: { test: 'abc' } };
+
+      TestModel.findOneAndUpdate({}, update, options).lean().
+        exec(function(error, doc, res) {
+          assert.ifError(error);
+          assert.ok(res);
+          assert.ok(res.ok);
+
+          done();
+        });
+    });
+
     it('handles setting single embedded docs to null (gh-4281)', function(done) {
       var foodSchema = new mongoose.Schema({
         name: { type: String, default: 'Bacon' }
@@ -1721,6 +1742,21 @@ describe('model: findByIdAndUpdate:', function() {
       });
     });
 
+    it('handles upserting a non-existing field (gh-4757)', function(done) {
+      var modelSchema = new Schema({ field: Number }, { strict: 'throw' });
+
+      var Model = db.model('gh4757', modelSchema);
+      Model.findOneAndUpdate({ nonexistingField: 1 }, { field: 2 }, {
+        upsert: true,
+        setDefaultsOnInsert: true,
+        new: true
+      }).exec(function(error) {
+        assert.ok(error);
+        assert.equal(error.name, 'StrictModeError');
+        done();
+      });
+    });
+
     it('should not apply schema transforms (gh-4574)', function(done) {
       var options = {
         toObject: {
@@ -1750,6 +1786,44 @@ describe('model: findByIdAndUpdate:', function() {
         then(function() {
           done();
         });
+    });
+
+    it('properly handles casting nested objects in update (gh-4724)', function(done) {
+      var locationSchema = new Schema({
+        _id: false,
+        location: {
+          type: { type: String, default: 'Point' },
+          coordinates: [Number]
+        }
+      });
+
+      var testSchema = new Schema({
+        locations: [locationSchema]
+      });
+
+      var T = db.model('gh4724', testSchema);
+
+      var t = new T({
+        locations: [{
+          location: { type: 'Point', coordinates: [-122, 44] }
+        }]
+      });
+
+      t.save().
+        then(function(t) {
+          return T.findByIdAndUpdate(t._id, {
+            $set: {
+              'locations.0': {
+                location: { type: 'Point', coordinates: [-123, 45] }
+              }
+            }
+          }, { new: true });
+        }).
+        then(function(res) {
+          assert.equal(res.locations[0].location.coordinates[0], -123);
+          done();
+        }).
+        catch(done);
     });
 
     it('doesnt do double validation on document arrays during updates (gh-4440)', function(done) {

@@ -3391,6 +3391,60 @@ describe('document', function() {
       });
     });
 
+    it('handles setting single nested doc to null after setting (gh-4766)', function(done) {
+      var EntitySchema = new Schema({
+        company: {
+          type: String,
+          required: true
+        },
+        name: {
+          type: String,
+          required: false
+        },
+        email: {
+          type: String,
+          required: false
+        }
+      }, { _id: false, id: false });
+
+      var ShipmentSchema = new Schema({
+        entity: {
+          shipper: {
+            type: EntitySchema,
+            required: false
+          },
+          manufacturer: {
+            type: EntitySchema,
+            required: false
+          }
+        }
+      });
+
+      var Shipment = db.model('gh4766', ShipmentSchema);
+      var doc = new Shipment({
+        entity: {
+          shipper: null,
+          manufacturer: {
+            company: 'test',
+            name: 'test',
+            email: 'test@email'
+          }
+        }
+      });
+
+      doc.save().
+        then(function() { return Shipment.findById(doc._id); }).
+        then(function(shipment) {
+          shipment.entity = shipment.entity;
+          shipment.entity.manufacturer = null;
+          return shipment.save();
+        }).
+        then(function() {
+          done();
+        }).
+        catch(done);
+    });
+
     it('buffers with subtypes as ids (gh-4506)', function(done) {
       var uuid = require('uuid');
 
@@ -3489,6 +3543,141 @@ describe('document', function() {
           done();
         }).
         catch(done);
+    });
+
+    it('handles setting virtual subpaths (gh-4716)', function(done) {
+      var childSchema = new Schema({
+        name: { type: String, default: 'John' },
+        favorites: {
+          color: {
+            type: String,
+            default: 'Blue'
+          }
+        }
+      });
+
+      var parentSchema = new Schema({
+        name: { type: String },
+        children: {
+          type: [childSchema],
+          default: [{}]
+        }
+      });
+
+      parentSchema.virtual('favorites').set(function(v) {
+        return this.children[0].set('favorites', v);
+      }).get(function() {
+        return this.children[0].get('favorites');
+      });
+
+      var Parent = db.model('gh4716', parentSchema);
+      var p = new Parent({ name: 'Anakin' });
+      p.set('children.0.name', 'Leah');
+      p.set('favorites.color', 'Red');
+      assert.equal(p.children[0].favorites.color, 'Red');
+      done();
+    });
+
+    it('handles selected nested elements with defaults (gh-4739)', function(done) {
+      var userSchema = new Schema({
+        preferences: {
+          sleep: { type: Boolean, default: false },
+          test: { type: Boolean, default: true }
+        },
+        name: String
+      });
+
+      var User = db.model('User', userSchema);
+
+      var user = { name: 'test' };
+      User.collection.insertOne(user, function(error) {
+        assert.ifError(error);
+        User.findById(user, { 'preferences.sleep': 1, name: 1 }, function(error, user) {
+          assert.ifError(error);
+          assert.strictEqual(user.preferences.sleep, false);
+          assert.ok(!user.preferences.test);
+          done();
+        });
+      });
+    });
+
+    it('handles mark valid in subdocs correctly (gh-4778)', function(done) {
+      var SubSchema = new mongoose.Schema({
+        field: {
+          nestedField: {
+            type: mongoose.Schema.ObjectId,
+            required: false
+          }
+        }
+      }, { _id: false, id: false });
+
+      var Model2Schema = new mongoose.Schema({
+        sub: {
+          type: SubSchema,
+          required: false
+        }
+      });
+      var Model2 = db.model('gh4778', Model2Schema);
+
+      var doc = new Model2({
+        sub: {}
+      });
+
+      doc.sub.field.nestedField = { };
+      doc.sub.field.nestedField = '574b69d0d9daf106aaa62974';
+      assert.ok(!doc.validateSync());
+      done();
+    });
+
+    it('toObject() with buffer and minimize (gh-4800)', function(done) {
+      var TestSchema = new mongoose.Schema({ buf: Buffer }, {
+        toObject: {
+          virtuals: true,
+          getters: true
+        }
+      });
+
+      var Test = db.model('gh4800', TestSchema);
+
+      Test.create({ buf: new Buffer('abcd') }).
+        then(function(doc) {
+          return Test.findById(doc._id);
+        }).
+        then(function(doc) {
+          // Should not throw
+          require('util').inspect(doc);
+          done();
+        }).
+        catch(done);
+    });
+
+    it('does not overwrite when setting nested (gh-4793)', function(done) {
+      var grandchildSchema = new mongoose.Schema();
+      grandchildSchema.method({
+        foo: function() { return 'bar'; }
+      });
+      var Grandchild = db.model('gh4793_0', grandchildSchema);
+
+      var childSchema = new mongoose.Schema({
+        grandchild: grandchildSchema
+      });
+      var Child = mongoose.model('gh4793_1', childSchema);
+
+      var parentSchema = new mongoose.Schema({
+        children: [childSchema]
+      });
+      var Parent = mongoose.model('gh4793_2', parentSchema);
+
+      var grandchild = new Grandchild();
+      var child = new Child({grandchild: grandchild});
+
+      assert.equal(child.grandchild.foo(), 'bar');
+
+      var p = new Parent({children: [child]});
+
+      assert.equal(child.grandchild.foo(), 'bar');
+      assert.equal(p.children[0].grandchild.foo(), 'bar');
+      done();
     });
 
     it('modify multiple subdoc paths (gh-4405)', function(done) {

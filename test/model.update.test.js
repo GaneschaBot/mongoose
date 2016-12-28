@@ -2061,6 +2061,30 @@ describe('model: update:', function() {
       });
     });
 
+    it('overwrite with timestamps (gh-4054)', function(done) {
+      var testSchema = new Schema({
+        user: String,
+        something: Number
+      }, { timestamps: true });
+
+      var TestModel = db.model('gh4054', testSchema);
+      var options = { overwrite: true, upsert: true };
+      var update = {
+        user: 'John',
+        something: 1
+      };
+
+      TestModel.update({ user: 'test' }, update, options, function(error) {
+        assert.ifError(error);
+        TestModel.findOne({}, function(error, doc) {
+          assert.ifError(error);
+          assert.ok(doc.createdAt);
+          assert.ok(doc.updatedAt);
+          done();
+        });
+      });
+    });
+
     it('update with buffer and exec (gh-4609)', function(done) {
       var arrSchema = new Schema({
         ip: mongoose.SchemaTypes.Buffer
@@ -2197,6 +2221,24 @@ describe('model: update:', function() {
             });
           });
       });
+    });
+
+    it('with overwrite and upsert (gh-4749)', function(done) {
+      var schema = new Schema({
+        name: String,
+        meta: { age: { type: Number } }
+      });
+      var User = db.model('gh4749', schema);
+
+      var update = { name: 'Bar', meta: { age: 33 } };
+      var options = { overwrite: true, upsert: true };
+      var q2 = User.update({ name: 'Bar' }, update, options);
+      assert.deepEqual(q2.getUpdate(), {
+        __v: 0,
+        meta: { age: 33 },
+        name: 'Bar'
+      });
+      done();
     });
 
     it('single embedded schema under document array (gh-4519)', function(done) {

@@ -4106,7 +4106,8 @@ describe('model: populate:', function() {
               populate('author').
               exec(function(error, post) {
                 assert.ifError(error);
-                assert.equal(post.author.name, 'Val');
+                assert.strictEqual(Array.isArray(post.author), false);
+                assert.ok(post.author.name.match(/^(Val|Test)$/));
                 done();
               });
           });
@@ -4501,6 +4502,125 @@ describe('model: populate:', function() {
         });
       });
 
+      it('supports setting default options in schema (gh-4741)', function(done) {
+        var sessionSchema = new Schema({
+          date: { type: Date },
+          user: { type: Schema.ObjectId, ref: 'User' }
+        });
+
+        var userSchema = new Schema({
+          name: String
+        });
+
+        userSchema.virtual('sessions', {
+          ref: 'gh4741',
+          localField: '_id',
+          foreignField: 'user',
+          options: { sort: { date: -1 }, limit: 2 }
+        });
+
+        var Session = db.model('gh4741', sessionSchema);
+        var User = db.model('gh4741_0', userSchema);
+
+        User.create({ name: 'Val' }).
+          then(function(user) {
+            return Session.create([
+              { date: '2011-06-01', user: user._id },
+              { date: '2011-06-02', user: user._id },
+              { date: '2011-06-03', user: user._id }
+            ]);
+          }).
+          then(function(sessions) {
+            return User.findById(sessions[0].user).populate('sessions');
+          }).
+          then(function(user) {
+            assert.equal(user.sessions.length, 2);
+            assert.equal(user.sessions[0].date.valueOf(),
+              new Date('2011-06-03').valueOf());
+            assert.equal(user.sessions[1].date.valueOf(),
+              new Date('2011-06-02').valueOf());
+            done();
+          }).
+          catch(done);
+      });
+
+      it('handles populating with discriminators that may not have a ref (gh-4817)', function(done) {
+        var imagesSchema = new mongoose.Schema({
+          name: {
+            type: String,
+            required: true
+          }
+        });
+        var Image = db.model('gh4817', imagesSchema, 'images');
+
+        var fieldSchema = new mongoose.Schema({
+          name: {
+            type: String,
+            required: true
+          }
+        });
+        var Field = db.model('gh4817_0', fieldSchema, 'fields');
+
+        var imageFieldSchema = new mongoose.Schema({
+          value: {
+            type: mongoose.Schema.Types.ObjectId,
+            ref: 'gh4817',
+            default: null
+          }
+        });
+        var FieldImage = Field.discriminator('gh4817_1', imageFieldSchema);
+
+        var textFieldSchema = new mongoose.Schema({
+          value: {
+            type: Schema.Types.Mixed,
+            required: true,
+            default: {}
+          }
+        });
+        var FieldText = Field.discriminator('gh4817_2', textFieldSchema);
+
+        var objectSchema = new mongoose.Schema({
+          name: {
+            type: String,
+            required: true
+          },
+          fields: [{
+            type: mongoose.Schema.Types.ObjectId,
+            ref: 'gh4817_0'
+          }]
+        });
+        var ObjectModel = db.model('gh4817_3', objectSchema, 'objects');
+
+        Image.create({ name: 'testimg' }).
+          then(function(image) {
+            return FieldImage.create({ name: 'test', value: image._id });
+          }).
+          then(function(fieldImage) {
+            return FieldText.create({ name: 'test', value: 'test' }).
+              then(function(fieldText) {
+                return [fieldImage, fieldText];
+              });
+          }).
+          then(function(fields) {
+            return ObjectModel.create({ fields: fields, name: 'test' });
+          }).
+          then(function(obj) {
+            return ObjectModel.findOne({ _id: obj._id }).populate({
+              path: 'fields',
+              populate: {
+                path: 'value'
+              }
+            });
+          }).
+          then(function(obj) {
+            assert.equal(obj.fields.length, 2);
+            assert.equal(obj.fields[0].value.name, 'testimg');
+            assert.equal(obj.fields[1].value, 'test');
+            done();
+          }).
+          catch(done);
+      });
+
       it('nested populate, virtual -> normal (gh-4631)', function(done) {
         var PersonSchema = new Schema({
           name: String
@@ -4553,6 +4673,45 @@ describe('model: populate:', function() {
               });
           });
         });
+      });
+
+      it('virtual populate in single nested doc (gh-4715)', function(done) {
+        var someModelSchema = new mongoose.Schema({
+          name: String
+        });
+
+        var SomeModel = db.model('gh4715', someModelSchema);
+
+        var schema0 = new mongoose.Schema({
+          name1: String
+        });
+
+        schema0.virtual('detail', {
+          ref: 'gh4715',
+          localField: '_id',
+          foreignField: '_id',
+          justOne: true
+        });
+
+        var schemaMain = new mongoose.Schema({
+          name: String,
+          obj: schema0
+        });
+
+        var ModelMain = db.model('gh4715_0', schemaMain);
+
+        ModelMain.create({ name: 'Test', obj: {} }).
+          then(function(m) {
+            return SomeModel.create({ _id: m.obj._id, name: 'test' });
+          }).
+          then(function() {
+            return ModelMain.findOne().populate('obj.detail');
+          }).
+          then(function(m) {
+            assert.equal(m.obj.detail.name, 'test');
+            done();
+          }).
+          catch(done);
       });
 
       it('specify model in populate (gh-4264)', function(done) {
